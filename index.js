@@ -216,6 +216,51 @@ app.get("/applications/check/:tuitionId", verifyToken, async (req, res) => {
   });
 });
 
+app.get("/applications/me", verifyToken, verifyStudent, async (req, res) => {
+  const result = await applications
+    .find({ studentEmail: req.user.email })
+    .sort({ appliedAt: -1 })
+    .toArray();
+  res.send(result);
+});
+
+app.delete("/applications/:id", verifyToken, verifyStudent, async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "Application not found" });
+  }
+
+  const application = await applications.findOne({
+    _id: new ObjectId(id),
+    studentEmail: req.user.email,
+  });
+
+  if (!application) {
+    return res.status(404).send({ message: "Application not found" });
+  }
+
+  if (application.status !== "pending") {
+    return res
+      .status(400)
+      .send({ message: "Only pending applications can be cancelled" });
+  }
+
+  const result = await applications.deleteOne({ _id: application._id });
+  res.send(result);
+});
+
+app.get("/stats/student", verifyToken, verifyStudent, async (req, res) => {
+  const query = { studentEmail: req.user.email };
+  const [total, accepted, pending] = await Promise.all([
+    applications.countDocuments(query),
+    applications.countDocuments({ ...query, status: "accepted" }),
+    applications.countDocuments({ ...query, status: "pending" }),
+  ]);
+
+  res.send({ total, accepted, pending, plan: req.user.plan ?? "free" });
+});
+
 app.listen(port, () => {
   console.log(`MentorLagbe server is running on port ${port}`);
 });

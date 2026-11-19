@@ -71,6 +71,29 @@ app.get("/", (req, res) => {
   res.send("MentorLagbe server is running");
 });
 
+app.get("/stats", async (req, res) => {
+  const [tutorCount, studentCount, tuitionCount, subjects] = await Promise.all([
+    users.countDocuments({ role: "tutor" }),
+    users.countDocuments({ role: "student" }),
+    tuitions.countDocuments(publicTuitionQuery),
+    tuitions
+      .aggregate([
+        { $match: publicTuitionQuery },
+        { $group: { _id: "$subject", count: { $sum: 1 } } },
+        { $project: { _id: 0, subject: "$_id", count: 1 } },
+        { $sort: { count: -1, subject: 1 } },
+      ])
+      .toArray(),
+  ]);
+
+  res.send({
+    tutors: tutorCount,
+    students: studentCount,
+    tuitions: tuitionCount,
+    subjects,
+  });
+});
+
 app.get("/tuitions", async (req, res) => {
   const { search, subject, classLevel, mode } = req.query;
   const query = { ...publicTuitionQuery };

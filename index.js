@@ -149,6 +149,73 @@ app.get("/tuitions/:id", async (req, res) => {
   res.send({ ...tuition, tutor });
 });
 
+const isFilled = (value) => typeof value === "string" && value.trim() !== "";
+
+app.post("/applications", verifyToken, verifyStudent, async (req, res) => {
+  const { tuitionId, studentPhone, preferredSchedule, studentNote } = req.body;
+
+  if (
+    !ObjectId.isValid(tuitionId) ||
+    !isFilled(studentPhone) ||
+    !isFilled(preferredSchedule) ||
+    !isFilled(studentNote)
+  ) {
+    return res.status(400).send({ message: "Please fill in all fields" });
+  }
+
+  const tuition = await tuitions.findOne({
+    _id: new ObjectId(tuitionId),
+    ...publicTuitionQuery,
+  });
+
+  if (!tuition) {
+    return res.status(404).send({ message: "Tuition not found" });
+  }
+
+  const existing = await applications.findOne({
+    tuitionId,
+    studentEmail: req.user.email,
+  });
+
+  if (existing) {
+    return res
+      .status(409)
+      .send({ message: "You have already applied for this tuition" });
+  }
+
+  const application = {
+    tuitionId,
+    tuitionTitle: tuition.title,
+    subject: tuition.subject,
+    monthlyFee: tuition.monthlyFee,
+    tutorName: tuition.tutorName,
+    tutorEmail: tuition.tutorEmail,
+    studentName: req.user.name,
+    studentEmail: req.user.email,
+    studentPhone: studentPhone.trim(),
+    preferredSchedule: preferredSchedule.trim(),
+    studentNote: studentNote.trim(),
+    status: "pending",
+    appliedAt: new Date(),
+  };
+
+  const result = await applications.insertOne(application);
+  res.status(201).send(result);
+});
+
+app.get("/applications/check/:tuitionId", verifyToken, async (req, res) => {
+  const application = await applications.findOne(
+    { tuitionId: req.params.tuitionId, studentEmail: req.user.email },
+    { projection: { status: 1, appliedAt: 1 } }
+  );
+
+  res.send({
+    applied: Boolean(application),
+    status: application?.status ?? null,
+    appliedAt: application?.appliedAt ?? null,
+  });
+});
+
 app.listen(port, () => {
   console.log(`MentorLagbe server is running on port ${port}`);
 });

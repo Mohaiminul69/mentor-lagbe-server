@@ -452,6 +452,114 @@ app.get("/stats/tutor", verifyToken, verifyTutor, async (req, res) => {
   });
 });
 
+app.get("/stats/admin", verifyToken, verifyAdmin, async (req, res) => {
+  const [totalUsers, tutors, students, pending, approved, rejected, revenue] =
+    await Promise.all([
+      users.countDocuments(),
+      users.countDocuments({ role: "tutor" }),
+      users.countDocuments({ role: "student" }),
+      tuitions.countDocuments({ approvalStatus: "pending" }),
+      tuitions.countDocuments({ approvalStatus: "approved" }),
+      tuitions.countDocuments({ approvalStatus: "rejected" }),
+      payments
+        .aggregate([
+          { $match: { paymentStatus: "paid" } },
+          { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+        ])
+        .toArray(),
+    ]);
+
+  res.send({
+    totalUsers,
+    tutors,
+    students,
+    pendingTuitions: pending,
+    approvedTuitions: approved,
+    rejectedTuitions: rejected,
+    revenue: revenue[0]?.total ?? 0,
+    transactions: revenue[0]?.count ?? 0,
+  });
+});
+
+app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
+  const result = await users
+    .find(
+      {},
+      { projection: { name: 1, email: 1, image: 1, role: 1, plan: 1, createdAt: 1 } }
+    )
+    .sort({ createdAt: -1 })
+    .toArray();
+  res.send(result);
+});
+
+app.patch("/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body;
+
+  if (!["student", "tutor", "admin"].includes(role)) {
+    return res.status(400).send({ message: "Invalid role" });
+  }
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(404).send({ message: "User not found" });
+  }
+
+  if (req.user._id.toString() === id) {
+    return res.status(400).send({ message: "You cannot change your own role" });
+  }
+
+  const result = await users.updateOne({ _id: new ObjectId(id) }, { $set: { role } });
+
+  if (result.matchedCount === 0) {
+    return res.status(404).send({ message: "User not found" });
+  }
+
+  res.send(result);
+});
+
+app.get("/admin/tuitions", verifyToken, verifyAdmin, async (req, res) => {
+  const { status } = req.query;
+  const query = ["pending", "approved", "rejected"].includes(status)
+    ? { approvalStatus: status }
+    : {};
+  const result = await tuitions.find(query).sort({ createdAt: -1 }).toArray();
+  res.send(result);
+});
+
+app.patch(
+  "/admin/tuitions/:id/approval",
+  verifyToken,
+  verifyAdmin,
+  async (req, res) => {
+    const { id } = req.params;
+    const { approvalStatus } = req.body;
+
+    if (!["approved", "rejected"].includes(approvalStatus)) {
+      return res.status(400).send({ message: "Status must be approved or rejected" });
+    }
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(404).send({ message: "Tuition not found" });
+    }
+
+    const result = await tuitions.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { approvalStatus } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).send({ message: "Tuition not found" });
+    }
+
+    res.send(result);
+  }
+);
+
+app.get("/admin/payments", verifyToken, verifyAdmin, async (req, res) => {
+  const result = await payments.find().sort({ paidAt: -1 }).toArray();
+  res.send(result);
+});
+
 app.listen(port, () => {
   console.log(`MentorLagbe server is running on port ${port}`);
 });

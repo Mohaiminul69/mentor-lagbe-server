@@ -725,6 +725,23 @@ app.post("/payments/verify", verifyToken, async (req, res) => {
   res.send(saved);
 });
 
+app.use((req, res) => {
+  res.status(404).send({ message: "Route not found" });
+});
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  if (error.type === "entity.parse.failed") {
+    return res.status(400).send({ message: "Invalid JSON in request body" });
+  }
+
+  console.error(error);
+  res.status(500).send({ message: "Something went wrong on the server" });
+});
+
 app.listen(port, () => {
   console.log(`MentorLagbe server is running on port ${port}`);
 });

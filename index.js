@@ -3,6 +3,16 @@ import cors from "cors";
 import "dotenv/config";
 import jwt from "jsonwebtoken";
 import { MongoClient, ObjectId } from "mongodb";
+import Stripe from "stripe";
+
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY)
+  : null;
+
+const proPlans = {
+  student: { name: "Student Pro", amount: 10 },
+  tutor: { name: "Tutor Pro", amount: 15 },
+};
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -151,7 +161,7 @@ app.get("/tuitions/:id", async (req, res) => {
 
   const tutor = await users.findOne(
     { email: tuition.tutorEmail },
-    { projection: { name: 1, email: 1, image: 1, bio: 1, phone: 1, plan: 1 } }
+    { projection: { name: 1, email: 1, image: 1, bio: 1, phone: 1, plan: 1 } },
   );
 
   res.send({ ...tuition, tutor });
@@ -214,7 +224,7 @@ app.post("/applications", verifyToken, verifyStudent, async (req, res) => {
 app.get("/applications/check/:tuitionId", verifyToken, async (req, res) => {
   const application = await applications.findOne(
     { tuitionId: req.params.tuitionId, studentEmail: req.user.email },
-    { projection: { status: 1, appliedAt: 1 } }
+    { projection: { status: 1, appliedAt: 1 } },
   );
 
   res.send({
@@ -232,31 +242,36 @@ app.get("/applications/me", verifyToken, verifyStudent, async (req, res) => {
   res.send(result);
 });
 
-app.delete("/applications/:id", verifyToken, verifyStudent, async (req, res) => {
-  const { id } = req.params;
+app.delete(
+  "/applications/:id",
+  verifyToken,
+  verifyStudent,
+  async (req, res) => {
+    const { id } = req.params;
 
-  if (!ObjectId.isValid(id)) {
-    return res.status(404).send({ message: "Application not found" });
-  }
+    if (!ObjectId.isValid(id)) {
+      return res.status(404).send({ message: "Application not found" });
+    }
 
-  const application = await applications.findOne({
-    _id: new ObjectId(id),
-    studentEmail: req.user.email,
-  });
+    const application = await applications.findOne({
+      _id: new ObjectId(id),
+      studentEmail: req.user.email,
+    });
 
-  if (!application) {
-    return res.status(404).send({ message: "Application not found" });
-  }
+    if (!application) {
+      return res.status(404).send({ message: "Application not found" });
+    }
 
-  if (application.status !== "pending") {
-    return res
-      .status(400)
-      .send({ message: "Only pending applications can be cancelled" });
-  }
+    if (application.status !== "pending") {
+      return res
+        .status(400)
+        .send({ message: "Only pending applications can be cancelled" });
+    }
 
-  const result = await applications.deleteOne({ _id: application._id });
-  res.send(result);
-});
+    const result = await applications.deleteOne({ _id: application._id });
+    res.send(result);
+  },
+);
 
 app.get("/stats/student", verifyToken, verifyStudent, async (req, res) => {
   const query = { studentEmail: req.user.email };
@@ -328,7 +343,8 @@ app.post("/tuitions", verifyToken, verifyTutor, async (req, res) => {
     const count = await tuitions.countDocuments({ tutorEmail: req.user.email });
     if (count >= FREE_TUITION_LIMIT) {
       return res.status(403).send({
-        message: "Free plan tutors can post up to 2 tuitions. Upgrade to Pro for unlimited posts.",
+        message:
+          "Free plan tutors can post up to 2 tuitions. Upgrade to Pro for unlimited posts.",
       });
     }
   }
@@ -359,28 +375,35 @@ app.patch("/tuitions/:id", verifyToken, verifyTutor, async (req, res) => {
 
   const result = await tuitions.updateOne(
     { _id: tuition._id },
-    { $set: { ...data, approvalStatus: "pending" } }
+    { $set: { ...data, approvalStatus: "pending" } },
   );
   res.send(result);
 });
 
-app.patch("/tuitions/:id/status", verifyToken, verifyTutor, async (req, res) => {
-  const tuition = await findOwnTuition(req.params.id, req.user.email);
+app.patch(
+  "/tuitions/:id/status",
+  verifyToken,
+  verifyTutor,
+  async (req, res) => {
+    const tuition = await findOwnTuition(req.params.id, req.user.email);
 
-  if (!tuition) {
-    return res.status(404).send({ message: "Tuition not found" });
-  }
+    if (!tuition) {
+      return res.status(404).send({ message: "Tuition not found" });
+    }
 
-  if (typeof req.body.isActive !== "boolean") {
-    return res.status(400).send({ message: "isActive must be true or false" });
-  }
+    if (typeof req.body.isActive !== "boolean") {
+      return res
+        .status(400)
+        .send({ message: "isActive must be true or false" });
+    }
 
-  const result = await tuitions.updateOne(
-    { _id: tuition._id },
-    { $set: { isActive: req.body.isActive } }
-  );
-  res.send(result);
-});
+    const result = await tuitions.updateOne(
+      { _id: tuition._id },
+      { $set: { isActive: req.body.isActive } },
+    );
+    res.send(result);
+  },
+);
 
 app.delete("/tuitions/:id", verifyToken, verifyTutor, async (req, res) => {
   const tuition = await findOwnTuition(req.params.id, req.user.email);
@@ -411,7 +434,9 @@ app.patch(
     const { status } = req.body;
 
     if (!["accepted", "rejected"].includes(status)) {
-      return res.status(400).send({ message: "Status must be accepted or rejected" });
+      return res
+        .status(400)
+        .send({ message: "Status must be accepted or rejected" });
     }
 
     if (!ObjectId.isValid(id)) {
@@ -420,7 +445,7 @@ app.patch(
 
     const result = await applications.updateOne(
       { _id: new ObjectId(id), tutorEmail: req.user.email },
-      { $set: { status } }
+      { $set: { status } },
     );
 
     if (result.matchedCount === 0) {
@@ -428,7 +453,7 @@ app.patch(
     }
 
     res.send(result);
-  }
+  },
 );
 
 app.get("/stats/tutor", verifyToken, verifyTutor, async (req, res) => {
@@ -464,7 +489,13 @@ app.get("/stats/admin", verifyToken, verifyAdmin, async (req, res) => {
       payments
         .aggregate([
           { $match: { paymentStatus: "paid" } },
-          { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$amount" },
+              count: { $sum: 1 },
+            },
+          },
         ])
         .toArray(),
     ]);
@@ -485,7 +516,16 @@ app.get("/users", verifyToken, verifyAdmin, async (req, res) => {
   const result = await users
     .find(
       {},
-      { projection: { name: 1, email: 1, image: 1, role: 1, plan: 1, createdAt: 1 } }
+      {
+        projection: {
+          name: 1,
+          email: 1,
+          image: 1,
+          role: 1,
+          plan: 1,
+          createdAt: 1,
+        },
+      },
     )
     .sort({ createdAt: -1 })
     .toArray();
@@ -508,7 +548,10 @@ app.patch("/users/:id/role", verifyToken, verifyAdmin, async (req, res) => {
     return res.status(400).send({ message: "You cannot change your own role" });
   }
 
-  const result = await users.updateOne({ _id: new ObjectId(id) }, { $set: { role } });
+  const result = await users.updateOne(
+    { _id: new ObjectId(id) },
+    { $set: { role } },
+  );
 
   if (result.matchedCount === 0) {
     return res.status(404).send({ message: "User not found" });
@@ -535,7 +578,9 @@ app.patch(
     const { approvalStatus } = req.body;
 
     if (!["approved", "rejected"].includes(approvalStatus)) {
-      return res.status(400).send({ message: "Status must be approved or rejected" });
+      return res
+        .status(400)
+        .send({ message: "Status must be approved or rejected" });
     }
 
     if (!ObjectId.isValid(id)) {
@@ -544,7 +589,7 @@ app.patch(
 
     const result = await tuitions.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { approvalStatus } }
+      { $set: { approvalStatus } },
     );
 
     if (result.matchedCount === 0) {
@@ -552,12 +597,132 @@ app.patch(
     }
 
     res.send(result);
-  }
+  },
 );
 
 app.get("/admin/payments", verifyToken, verifyAdmin, async (req, res) => {
   const result = await payments.find().sort({ paidAt: -1 }).toArray();
   res.send(result);
+});
+
+app.post("/payments/create-checkout-session", verifyToken, async (req, res) => {
+  const plan = proPlans[req.user.role];
+
+  if (!plan) {
+    return res
+      .status(403)
+      .send({ message: "Only students and tutors can buy Pro" });
+  }
+  if (req.user.plan === "pro") {
+    return res.status(400).send({ message: "You are already on the Pro plan" });
+  }
+  if (!stripe) {
+    return res.status(503).send({ message: "Payments are not configured yet" });
+  }
+
+  const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+
+  let session;
+  try {
+    session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer_email: req.user.email,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: plan.amount * 100,
+            product_data: {
+              name: `MentorLagbe ${plan.name}`,
+              description: "One-time upgrade to the Pro plan",
+            },
+          },
+        },
+      ],
+      metadata: {
+        userEmail: req.user.email,
+        role: req.user.role,
+        planName: plan.name,
+      },
+      success_url: `${clientUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${clientUrl}/payment/cancel`,
+    });
+  } catch {
+    return res.status(502).send({ message: "Could not start Stripe checkout" });
+  }
+
+  res.send({ url: session.url });
+});
+
+app.post("/payments/verify", verifyToken, async (req, res) => {
+  const { sessionId } = req.body;
+
+  if (typeof sessionId !== "string" || !sessionId.startsWith("cs_")) {
+    return res.status(400).send({ message: "Invalid payment session" });
+  }
+
+  const existing = await payments.findOne({ stripeSessionId: sessionId });
+
+  if (existing) {
+    if (existing.userEmail !== req.user.email) {
+      return res
+        .status(403)
+        .send({ message: "This payment belongs to another account" });
+    }
+    return res.send(existing);
+  }
+
+  if (!stripe) {
+    return res.status(503).send({ message: "Payments are not configured yet" });
+  }
+
+  let session;
+  try {
+    session = await stripe.checkout.sessions.retrieve(sessionId);
+  } catch {
+    return res.status(404).send({ message: "Payment session not found" });
+  }
+
+  if (session.metadata?.userEmail !== req.user.email) {
+    return res
+      .status(403)
+      .send({ message: "This payment belongs to another account" });
+  }
+  if (session.payment_status !== "paid") {
+    return res
+      .status(400)
+      .send({ message: "This payment has not been completed" });
+  }
+
+  const payment = {
+    userEmail: req.user.email,
+    userName: req.user.name,
+    userRole: session.metadata.role,
+    planName: session.metadata.planName,
+    amount: session.amount_total / 100,
+    currency: session.currency,
+    transactionId:
+      typeof session.payment_intent === "string"
+        ? session.payment_intent
+        : (session.payment_intent?.id ?? session.id),
+    stripeSessionId: session.id,
+    paymentStatus: "paid",
+    paidAt: new Date(),
+  };
+
+  const result = await payments.updateOne(
+    { stripeSessionId: session.id },
+    { $setOnInsert: payment },
+    { upsert: true },
+  );
+
+  if (result.upsertedCount === 1) {
+    await users.updateOne({ email: req.user.email }, { $set: { plan: "pro" } });
+  }
+
+  const saved = await payments.findOne({ stripeSessionId: session.id });
+  res.send(saved);
 });
 
 app.listen(port, () => {

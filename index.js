@@ -39,6 +39,23 @@ const tuitions = database.collection("tuitions");
 const applications = database.collection("applications");
 const payments = database.collection("payments");
 
+const createIndexes = async () => {
+  try {
+    await Promise.all([
+      applications.createIndexes([
+        { key: { tuitionId: 1, studentEmail: 1 }, unique: true },
+      ]),
+      payments.createIndexes([{ key: { stripeSessionId: 1 }, unique: true }]),
+    ]);
+  } catch (error) {
+    console.error("Index creation failed", error);
+  }
+};
+
+await createIndexes();
+
+const isDuplicateKeyError = (error) => error?.code === 11000;
+
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader?.split(" ")[1];
@@ -217,8 +234,17 @@ app.post("/applications", verifyToken, verifyStudent, async (req, res) => {
     appliedAt: new Date(),
   };
 
-  const result = await applications.insertOne(application);
-  res.status(201).send(result);
+  try {
+    const result = await applications.insertOne(application);
+    res.status(201).send(result);
+  } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      return res
+        .status(409)
+        .send({ message: "You have already applied for this tuition" });
+    }
+    throw error;
+  }
 });
 
 app.get("/applications/check/:tuitionId", verifyToken, async (req, res) => {
@@ -711,14 +737,23 @@ app.post("/payments/verify", verifyToken, async (req, res) => {
     paidAt: new Date(),
   };
 
-  const result = await payments.updateOne(
-    { stripeSessionId: session.id },
-    { $setOnInsert: payment },
-    { upsert: true },
-  );
+  try {
+    const result = await payments.updateOne(
+      { stripeSessionId: session.id },
+      { $setOnInsert: payment },
+      { upsert: true },
+    );
 
-  if (result.upsertedCount === 1) {
-    await users.updateOne({ email: req.user.email }, { $set: { plan: "pro" } });
+    if (result.upsertedCount === 1) {
+      await users.updateOne(
+        { email: req.user.email },
+        { $set: { plan: "pro" } },
+      );
+    }
+  } catch (error) {
+    if (!isDuplicateKeyError(error)) {
+      throw error;
+    }
   }
 
   const saved = await payments.findOne({ stripeSessionId: session.id });
